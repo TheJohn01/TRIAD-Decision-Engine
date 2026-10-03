@@ -142,9 +142,8 @@ You can swap in larger local models (for example `qwen2.5:7b` or `llama3.1:8b`) 
 ## Development
 
 This project was developed with AI assistance (Claude, by Anthropic). The AI wrote most of
-the code and helped find and evaluate the published data and models it builds on. I defined
-the goals and requirements, chose the direction at each step, ran and tested the code on my
-own machine, reported problems and decided which results to keep.
+the code. I defined the goals and requirements, chose the direction at each step, ran and 
+tested the code on my own machine, reported problems and decided which results to keep.
 
 ## Built with
 
