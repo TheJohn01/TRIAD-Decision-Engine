@@ -1,0 +1,5 @@
+gradio>=6.0
+langgraph>=0.4
+langchain-core>=0.3
+langchain-ollama>=0.3.4
+langchain-openai>=0.3
