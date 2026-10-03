@@ -142,3 +142,7 @@ You can swap in larger local models (for example `qwen2.5:7b` or `llama3.1:8b`) 
 ## Built with
 
 [LangGraph](https://github.com/langchain-ai/langgraph) · [LangChain](https://github.com/langchain-ai/langchain) · [Gradio](https://www.gradio.app) · [Ollama](https://ollama.com)
+
+## License
+
+Released under the MIT License.
