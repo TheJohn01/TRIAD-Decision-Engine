@@ -139,6 +139,13 @@ You can swap in larger local models (for example `qwen2.5:7b` or `llama3.1:8b`) 
 | A run is very slow | Normal on CPU. Use Online mode, smaller prompts, or set `MAX_ROUNDS = 1`. |
 | Theme or styling not applied | Make sure you are on Gradio 6 and `style.css` is in the same folder as `app.py`. |
 
+## Development
+
+This project was developed with AI assistance (Claude, by Anthropic). The AI wrote most of
+the code and helped find and evaluate the published data and models it builds on. I defined
+the goals and requirements, chose the direction at each step, ran and tested the code on my
+own machine, reported problems and decided which results to keep.
+
 ## Built with
 
 [LangGraph](https://github.com/langchain-ai/langgraph) · [LangChain](https://github.com/langchain-ai/langchain) · [Gradio](https://www.gradio.app) · [Ollama](https://ollama.com)
