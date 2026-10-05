@@ -53,7 +53,7 @@ The interface updates live after every step, and the **Debate log** shows each r
 
 ```bash
 git clone https://github.com/TheJohn01/TRIAD-Decision-Engine.git
-cd <your-repo>
+cd TRIAD-Decision-Engine
 
 python -m venv .venv
 # Windows: .venv\Scripts\activate
