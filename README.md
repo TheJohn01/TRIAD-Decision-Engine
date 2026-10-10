@@ -2,7 +2,7 @@
 
 *Synthetic network for objective deliberation.*
 
-T.R.I.A.D. is a multi-agent decision engine. Instead of asking one language model for an answer, it puts your question to three AI agents with deliberately different priorities, lets them criticise each other, has them vote, and then synthesizes a final consensus. Every step of the debate is shown in the interface, so you can see *how* the answer was reached, not only *what* it is.
+T.R.I.A.D. is a multi-agent decision engine. Instead of asking one language model for an answer, it puts your question to three AI agents with deliberately different priorities, lets them criticise each other, has them vote and revise, and then a neutral judge synthesizes a final consensus. Every step of the debate is shown in the interface, so you can see *how* the answer was reached, not only *what* it is.
 
 The three agents are modelled on Freud's structural model of the mind:
 
@@ -26,18 +26,20 @@ flowchart TD
     I --> C[Cross-critique<br/>each agent critiques the other two]
     E --> C
     S --> C
-    C --> V[Vote<br/>APPROVE / MODIFY / REJECT]
-    V -->|2+ APPROVE or round limit reached| F[Consensus synthesized]
-    V -->|no majority| C
+    C --> V[Vote<br/>APPROVE / MODIFY / REJECT + reason]
+    V -->|2+ APPROVE or round limit reached| F[Neutral judge synthesizes consensus]
+    V -->|no majority| R[Revision<br/>each agent rewrites its proposal]
+    R --> C
 ```
 
 1. **Proposals.** All three agents answer the question in parallel, each from its own perspective.
-2. **Cross-critique.** Each agent critiques the other two. From round 2 on, they also see the previous round's critiques.
-3. **Vote.** Each agent votes `APPROVE`, `MODIFY` or `REJECT`.
-4. **Routing.** With two or more approvals, or once the round limit is reached (2 by default), the debate ends. Otherwise another critique round starts.
-5. **Consensus.** A final answer is synthesized from the proposals, critiques and votes.
+2. **Cross-critique.** Each agent critiques the other two. From round 2 on, they critique the revised proposals and also see the previous round's critiques.
+3. **Vote.** Each agent votes `APPROVE`, `MODIFY` or `REJECT` and gives a one-sentence reason.
+4. **Routing.** With two or more approvals, or once the round limit is reached (2 by default), the debate ends.
+5. **Revision.** Without a majority, each agent rewrites its own proposal using the critiques it received, and a new critique round starts.
+6. **Consensus.** A separate judge model, which did not take part in the debate, synthesizes the final answer from the proposals, critiques and votes.
 
-The interface updates live after every step, and the **Debate log** shows each round as cards: who critiqued whom, what they said, and how they voted.
+The interface updates live after every step. The **Debate log** shows each round as cards: who critiqued whom, what they said, how they voted and why. When the debate ends, you can download it as a JSON file.
 
 ---
 
@@ -47,7 +49,7 @@ The interface updates live after every step, and the **Debate log** shows each r
 
 - Python 3.10 or newer
 - **Local mode:** [Ollama](https://ollama.com) (a recent version with "thinking" support, 0.9 or newer)
-- **Online mode:** an OpenAI API key (see [Limitations](#limitations) about costs)
+- **Online mode:** an API key for OpenAI or another OpenAI-compatible provider, such as Groq (see [Configuration](#configuration))
 
 ### Installation
 
@@ -63,12 +65,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For local mode, pull the three models once:
+For local mode, pull the four models once (three debaters and the judge):
 
 ```bash
 ollama pull qwen2.5:1.5b
 ollama pull deepseek-r1:1.5b
 ollama pull llama3.2:1b
+ollama pull llama3.2:3b
 ```
 
 ### Run
@@ -79,6 +82,14 @@ python app.py
 
 The interface opens in your browser. Choose **Local (Ollama)** or **Online (Cloud APIs)**, initialize the engine, type a question and press **Execute T.R.I.A.D. debate**.
 
+### Test
+
+```bash
+python test_app.py
+```
+
+The tests swap the AI models for fake ones, so they run in about a second without Ollama or an API key. Run them after every change.
+
 ---
 
 ## Project structure
@@ -86,6 +97,7 @@ The interface opens in your browser. Choose **Local (Ollama)** or **Online (Clou
 ```
 ├── app.py            # Agents, LangGraph debate pipeline and Gradio interface
 ├── style.css         # Dark theme and debate log styling
+├── test_app.py       # Quick checks with fake models (no Ollama needed)
 ├── requirements.txt  # Python dependencies
 └── README.md
 ```
@@ -99,9 +111,20 @@ All settings live at the top of `app.py`.
 | `AGENTS` | Name, prompt, model, temperature and token limit of each agent. Changing an agent is a one-place edit. |
 | `MAX_ROUNDS` | Maximum number of critique-and-vote rounds (default `2`). |
 | `REQUEST_TIMEOUT` | Seconds before a single model call gives up (default `180`). |
-| `get_model()` | Which model is used in Online mode (default `gpt-4o-mini`). |
+| `JUDGE` | Model, prompt and token limit of the neutral judge that writes the consensus (default local model `llama3.2:3b`). |
+| `ONLINE_BASE_URL` | Address of the online provider. `None` means OpenAI. |
+| `ONLINE_MODEL` | Which model is used in Online mode (default `gpt-4o-mini`). |
 
-You can swap in larger local models (for example `qwen2.5:7b` or `llama3.1:8b`) by changing `local_model`, provided your machine has the memory for them. If you use another reasoning model for Ego, keep `"thinks": True` on it.
+You can swap in larger local models (for example `qwen2.5:7b` or `llama3.1:8b`) by changing `local_model`, provided your machine has the memory for them. If you use another reasoning model for Ego, keep `"thinks": True` on it. On a machine with little memory, you can set the judge's `local_model` to one of the three debater models instead, so you only need three models.
+
+To use a free provider instead of OpenAI, change two lines. For example, for Groq:
+
+```python
+ONLINE_BASE_URL = "https://api.groq.com/openai/v1"
+ONLINE_MODEL = "llama-3.1-8b-instant"
+```
+
+Then enter your Groq key on the start screen. Other OpenAI-compatible providers (OpenRouter, Google Gemini, Mistral) work the same way with their own address and model name.
 
 ---
 
@@ -109,22 +132,17 @@ You can swap in larger local models (for example `qwen2.5:7b` or `llama3.1:8b`) 
 
 - **Small local models.** The default models have 1 to 1.5 billion parameters so they run on ordinary hardware. Their reasoning is shallow, they can contradict themselves, and they sometimes ignore instructions such as "answer in one word". Treat the output as a demonstration of the debate process, not as expert advice.
 - **Not a decision authority.** Majority agreement between three models is not evidence of correctness. Models can agree on something false. Do not rely on T.R.I.A.D. for medical, legal, financial or safety-critical decisions.
-- **Speed.** A full debate makes up to 16 model calls. On a CPU-only machine a local run can take several minutes. Online mode is much faster.
-- **Proposals are never revised.** Agents critique the original proposals in every round but do not rewrite them, so extra rounds add limited value.
-- **Consensus bias.** The final consensus is written by the Ego model, so it may lean towards Ego's rational perspective.
-- **Simple vote parsing.** Votes are read by finding the first `APPROVE`, `MODIFY` or `REJECT` in the reply. An unclear reply counts as `MODIFY`.
+- **Speed.** A full two-round debate makes 19 model calls (3 proposals, 6 per round, 3 revisions and 1 consensus). On a CPU-only machine a local run can take several minutes. Online mode is much faster.
+- **Judge is still a small model.** The neutral judge (`llama3.2:3b`) avoids favouring one debater, but it is only slightly larger than they are, so its summaries can still be shallow.
+- **Vote parsing.** Agents are asked to reply with `VOTE: ...` and `REASON: ...`. If a model ignores this format, the first `APPROVE`, `MODIFY` or `REJECT` in the reply is used, and an unclear reply counts as `MODIFY`.
 - **Truncated context.** Proposals and critiques are cut to 1,200 characters each when passed to the next step, to fit the small models' context window.
-- **Online mode is OpenAI only, and paid.** The cloud option is hard-wired to OpenAI, which bills per use. Free OpenAI-compatible providers exist, but adding them requires a small code change (see below).
-- **No saved history.** Debates are not stored. Closing the page loses them.
-- **API key handling.** The key is kept only in memory for your browser session and is never written to disk. Even so, don't run the app with a public share link while your own key is entered.
+- **One online provider at a time.** The provider is set in `app.py`, not chosen on the start screen. OpenAI bills per use; free providers usually have rate limits.
+- **History is a download, not a database.** Each finished debate can be downloaded as JSON, but nothing is kept on the server. Closing the page without downloading loses it.
+- **API key handling.** The key is kept only in memory for your browser session. It is never written to disk and is left out of the downloaded JSON. Even so, don't run the app with a public share link while your own key is entered.
 
 ## Possibilities and roadmap
 
-- **Revision step.** Let each agent revise its proposal after the critiques, which would make a third round worthwhile.
-- **Provider choice.** A dropdown for Groq, Google Gemini, OpenRouter or Mistral, which offer free tiers through OpenAI-compatible APIs.
-- **Neutral synthesizer.** Use a separate, larger model to write the consensus so no single agent dominates it.
-- **Structured votes.** Ask for JSON votes with a short justification, instead of parsing one word.
-- **Export.** Save a debate as Markdown or JSON for later reference.
+- **Provider choice on the start screen.** A dropdown for Groq, Google Gemini, OpenRouter or Mistral, instead of editing `app.py`.
 - **More or different agents.** The `AGENTS` dictionary makes it easy to try other perspectives, such as a domain expert or a devil's advocate.
 - **Hosting.** Deploy on [Hugging Face Spaces](https://huggingface.co/spaces), which runs Gradio apps for free (Online mode only, as Spaces cannot run Ollama on the free tier).
 
@@ -134,8 +152,9 @@ You can swap in larger local models (for example `qwen2.5:7b` or `llama3.1:8b`) 
 
 | Problem | Solution |
 |---|---|
-| "Debate stopped … Is Ollama running?" | Start Ollama and check that all three models are pulled with `ollama list`. |
-| Ego's proposal or the consensus is empty | Update Ollama and `langchain-ollama` (`pip install -U langchain-ollama`). Older versions handle reasoning models differently. |
+| "Debate stopped … Is Ollama running?" | Start Ollama and check that all four models are pulled with `ollama list`. |
+| The debate stops right at the end | The judge model is probably missing. Run `ollama pull llama3.2:3b`, or set the judge's `local_model` to a model you already have. |
+| Ego's proposal is empty | Update Ollama and `langchain-ollama` (`pip install -U langchain-ollama`). Older versions handle reasoning models differently. |
 | A run is very slow | Normal on CPU. Use Online mode, smaller prompts, or set `MAX_ROUNDS = 1`. |
 | Theme or styling not applied | Make sure you are on Gradio 6 and `style.css` is in the same folder as `app.py`. |
 

@@ -113,6 +113,13 @@
     line-height: 1.5;
     color: #c5c6c7;
 }
+/* The one-sentence reason each agent gives for its vote */
+.crit-reason {
+    padding: 8px 10px;
+    border-top: 1px dashed #333842;
+    color: var(--agent);
+    font-style: italic;
+}
 .crit-outcome {
     margin: 10px 0 0;
     color: #ff6600;

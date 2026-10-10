@@ -3,6 +3,7 @@ import json
 import html
 import time
 import operator
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
@@ -18,6 +19,12 @@ LOCAL = "Local (Ollama)"
 ONLINE = "Online (Cloud APIs)"
 MAX_ROUNDS = 2
 REQUEST_TIMEOUT = 180   # seconds; one stuck call can no longer freeze the whole app
+
+# Online mode works with any OpenAI-compatible provider.
+# OpenAI (paid):  ONLINE_BASE_URL = None,  ONLINE_MODEL = "gpt-4o-mini"
+# Groq (free tier): ONLINE_BASE_URL = "https://api.groq.com/openai/v1",  ONLINE_MODEL = "llama-3.1-8b-instant"
+ONLINE_BASE_URL = None
+ONLINE_MODEL = "gpt-4o-mini"
 
 # ---------------------------------------------------------------------------
 # 1. Agent configuration (the single place to edit names, prompts, models)
@@ -61,7 +68,15 @@ Keep answers under 250 words.""",
     },
 }
 
-CONSENSUS_SYSTEM = "You are the T.R.I.A.D. Consensus Engine. Synthesize the 3 positions into a final objective answer."
+# The neutral judge writes the final answer. It is not one of the three
+# debaters, so no single perspective dominates the consensus.
+JUDGE = {
+    "local_model": "llama3.2:3b",
+    "temperature": 0.2,
+    "max_tokens": 1024,
+    "system": "You are the T.R.I.A.D. Consensus Engine, a neutral judge. "
+              "Synthesize the 3 positions into a final objective answer. Keep it under 300 words.",
+}
 
 # Shown in the status bar as each graph step finishes
 STEP_NAMES = {
@@ -70,6 +85,7 @@ STEP_NAMES = {
     "superego_proposal": "Superego proposal ready",
     "cross_critique": "Cross-critique finished",
     "voting": "Votes counted",
+    "revision": "Proposals revised",
     "consensus": "Consensus synthesized",
 }
 
@@ -86,7 +102,7 @@ class TriadState(TypedDict):
     proposals: Annotated[dict, operator.or_]
     critiques: dict
     votes: dict
-    # operator.add appends one entry per debate round: {"critiques": ..., "votes": ...}
+    # operator.add appends one entry per debate round: {"critiques": ..., "votes": ..., "reasons": ...}
     history: Annotated[list, operator.add]
     iteration: int
     final_consensus: str
@@ -116,10 +132,15 @@ def format_block(title: str, texts: dict) -> str:
     return "\n".join(lines)
 
 
+def agent_config(agent: str) -> dict:
+    """Settings for one of the 3 debaters, or for the neutral judge."""
+    return JUDGE if agent == "judge" else AGENTS[agent]
+
+
 @lru_cache(maxsize=None)
 def get_model(agent: str, mode: str, api_key: str, think: bool = True):
     """Create each model once and reuse it (cached per agent/mode/key/think)."""
-    cfg = AGENTS[agent]
+    cfg = agent_config(agent)
     if mode == LOCAL:
         return ChatOllama(
             model=cfg["local_model"],
@@ -131,7 +152,8 @@ def get_model(agent: str, mode: str, api_key: str, think: bool = True):
             client_kwargs={"timeout": REQUEST_TIMEOUT},
         )
     return ChatOpenAI(
-        model="gpt-4o-mini",
+        model=ONLINE_MODEL,
+        base_url=ONLINE_BASE_URL,
         temperature=cfg["temperature"],
         api_key=api_key,
         max_tokens=cfg["max_tokens"],
@@ -142,8 +164,9 @@ def get_model(agent: str, mode: str, api_key: str, think: bool = True):
 
 def ask(state: TriadState, agent: str, prompt: str, system: str = "") -> tuple[str, str]:
     """Send one prompt to one agent. Returns (thought, answer)."""
+    cfg = agent_config(agent)
     messages = [
-        SystemMessage(content=system or AGENTS[agent]["system"]),
+        SystemMessage(content=system or cfg["system"]),
         HumanMessage(content=prompt),
     ]
     reply = get_model(agent, state["mode"], state["api_key"]).invoke(messages)
@@ -151,7 +174,7 @@ def ask(state: TriadState, agent: str, prompt: str, system: str = "") -> tuple[s
     thought = reply.additional_kwargs.get("reasoning_content", "") or tag_thought
 
     # Thinking used up the whole token budget: ask again with thinking switched off
-    if not answer and AGENTS[agent].get("thinks") and state["mode"] == LOCAL:
+    if not answer and cfg.get("thinks") and state["mode"] == LOCAL:
         reply = get_model(agent, state["mode"], state["api_key"], think=False).invoke(messages)
         answer = split_thinking(reply.content)[1]
         thought += "\n\n[Thinking hit the token limit, so the answer was generated with thinking off.]"
@@ -167,9 +190,27 @@ def ask_all(state: TriadState, prompts: dict) -> dict:
 
 
 def parse_vote(text: str) -> str:
-    """Take the first whole-word vote found; default to MODIFY."""
+    """Look for 'VOTE: X' first. If the model ignored the format,
+    take the first whole-word vote found. Default to MODIFY."""
+    match = re.search(r"VOTE:\s*(APPROVE|MODIFY|REJECT)", text.upper())
+    if match:
+        return match.group(1)
     found = re.findall(r"\b(APPROVE|MODIFY|REJECT)\b", text.upper())
     return found[0] if found else "MODIFY"
+
+
+def parse_reason(text: str) -> str:
+    """Return the text after 'REASON:' (one line), or an empty string."""
+    match = re.search(r"REASON:\s*(.+)", text, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def save_debate(state: dict) -> str:
+    """Write the debate to a JSON file and return its path. The API key is left out."""
+    data = {key: value for key, value in state.items() if key != "api_key"}
+    path = Path(tempfile.gettempdir()) / f"triad_debate_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return str(path)
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +227,11 @@ def make_proposal_node(agent: str):
 
 
 def cross_critique_node(state: TriadState) -> dict:
-    context = format_block("PROPOSALS", state["proposals"])
-    if state.get("critiques"):  # 2nd round: build on the previous debate
+    if state.get("critiques"):  # 2nd round: proposals were revised, show the old critiques too
+        context = format_block("REVISED PROPOSALS", state["proposals"])
         context += "\n\n" + format_block("PREVIOUS ROUND CRITIQUES", state["critiques"])
+    else:
+        context = format_block("PROPOSALS", state["proposals"])
 
     prompts = {}
     for agent, cfg in AGENTS.items():
@@ -201,15 +244,32 @@ def voting_node(state: TriadState) -> dict:
     prompt = (
         f"Query: {state['query']}\n\n"
         f"{format_block('CRITIQUES & DEBATE', state['critiques'])}\n\n"
-        "Cast your final vote: Respond with EXACTLY ONE WORD: APPROVE, MODIFY, or REJECT."
+        "Cast your vote. Reply in exactly this format, on two lines:\n"
+        "VOTE: APPROVE, MODIFY or REJECT\n"
+        "REASON: one short sentence."
     )
     answers = ask_all(state, {agent: prompt for agent in AGENTS})
     votes = {agent: parse_vote(answer) for agent, answer in answers.items()}
+    reasons = {agent: parse_reason(answer) for agent, answer in answers.items()}
     return {
         "votes": votes,
         "iteration": state.get("iteration", 0) + 1,
-        "history": [{"critiques": state["critiques"], "votes": votes}],
+        "history": [{"critiques": state["critiques"], "votes": votes, "reasons": reasons}],
     }
+
+
+def revision_node(state: TriadState) -> dict:
+    """No majority: each agent rewrites its own proposal using the critiques."""
+    prompts = {}
+    for agent in AGENTS:
+        prompts[agent] = (
+            f"Query: {state['query']}\n\n"
+            f"Your proposal:\n{truncate(state['proposals'][agent])}\n\n"
+            f"{format_block('CRITIQUES', state['critiques'])}\n\n"
+            "Rewrite your proposal, fixing the fair points raised against it. "
+            "Keep your own perspective. Keep it under 250 words."
+        )
+    return {"proposals": ask_all(state, prompts)}
 
 
 def consensus_node(state: TriadState) -> dict:
@@ -219,14 +279,14 @@ def consensus_node(state: TriadState) -> dict:
         format_block("CRITIQUES", state["critiques"]),
         f"Votes: {json.dumps(state['votes'])}",
     ])
-    return {"final_consensus": ask(state, "ego", prompt, system=CONSENSUS_SYSTEM)[1]}
+    return {"final_consensus": ask(state, "judge", prompt)[1]}
 
 
-def route_after_vote(state: TriadState) -> Literal["consensus", "cross_critique"]:
+def route_after_vote(state: TriadState) -> Literal["consensus", "revision"]:
     approvals = list(state["votes"].values()).count("APPROVE")
     if approvals >= 2 or state["iteration"] >= MAX_ROUNDS:
         return "consensus"
-    return "cross_critique"
+    return "revision"
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +296,7 @@ def build_graph():
     builder = StateGraph(TriadState)
     builder.add_node("cross_critique", cross_critique_node)
     builder.add_node("voting", voting_node)
+    builder.add_node("revision", revision_node)
     builder.add_node("consensus", consensus_node)
 
     for agent in AGENTS:  # 3 proposals run in parallel
@@ -246,6 +307,7 @@ def build_graph():
 
     builder.add_edge("cross_critique", "voting")
     builder.add_conditional_edges("voting", route_after_vote)
+    builder.add_edge("revision", "cross_critique")   # revised proposals get criticized again
     builder.add_edge("consensus", END)
     return builder.compile()
 
@@ -262,7 +324,7 @@ def round_outcome(votes: dict, round_no: int) -> str:
         return "Majority approved. Consensus synthesized."
     if round_no >= MAX_ROUNDS:
         return "No majority. Round limit reached, consensus synthesized anyway."
-    return "No majority. Debate continues."
+    return "No majority. Agents revise their proposals and the debate continues."
 
 
 def render_debate_log(history: list) -> str:
@@ -280,6 +342,8 @@ def render_debate_log(history: list) -> str:
             vote = votes.get(agent, "MODIFY")
             targets = " and ".join(a.title() for a in AGENTS if a != agent)
             text = html.escape(rnd["critiques"].get(agent, ""))
+            reason = html.escape(rnd.get("reasons", {}).get(agent, ""))
+            reason_html = f'<div class="crit-reason">Why {vote}: {reason}</div>' if reason else ""
             cards.append(f"""
             <div class="crit-card crit-{agent}">
               <div class="crit-head">
@@ -287,6 +351,7 @@ def render_debate_log(history: list) -> str:
                 <span class="crit-vote vote-{vote.lower()}">{vote}</span>
               </div>
               <div class="crit-body">{text}</div>
+              {reason_html}
             </div>""")
 
         cards_html = "".join(cards)
@@ -303,7 +368,7 @@ def render_debate_log(history: list) -> str:
     return "".join(rounds)
 
 
-def render_outputs(state: dict, status: str) -> tuple:
+def render_outputs(state: dict, status: str, debate_file: str | None = None) -> tuple:
     """Build every dashboard output from whatever the graph has produced so far."""
     votes = state.get("votes") or {}
     proposals = state.get("proposals") or {}
@@ -317,6 +382,7 @@ def render_outputs(state: dict, status: str) -> tuple:
         proposals.get("ego", ""),
         proposals.get("superego", ""),
         render_debate_log(state.get("history", [])),
+        debate_file,
     )
 
 
@@ -357,10 +423,11 @@ def execute_triad_query(query, mode, api_key):
                 status = f"[{time.time() - start:.0f}s] {done}"
             yield render_outputs(state, status)
     except Exception as e:
-        hint = " Is Ollama running, and are all three models pulled?" if mode == LOCAL else ""
+        hint = " Is Ollama running, and are all four models pulled (see README)?" if mode == LOCAL else ""
         raise gr.Error(f"Debate stopped: {type(e).__name__}: {e}.{hint}")
 
-    yield render_outputs(state, f"Done in {time.time() - start:.0f}s // MODE: {mode.upper()}")
+    status = f"Done in {time.time() - start:.0f}s // MODE: {mode.upper()}"
+    yield render_outputs(state, status, save_debate(state))
 
 
 # Read the CSS ourselves so it works no matter which folder the app is started from
@@ -398,6 +465,7 @@ with gr.Blocks(title="T.R.I.A.D. DECISION ENGINE") as demo:
 
         vote_output = gr.Textbox(label="DECISION STATUS & VOTING MATRIX", interactive=False, elem_classes=["vote-box"])
         final_output = gr.Textbox(label="FINAL SYNTHESIZED CONSENSUS", lines=8, interactive=False)
+        debate_file = gr.File(label="DOWNLOAD THIS DEBATE (JSON)", interactive=False)
 
         with gr.Accordion("DEBATE LOG: HOW EACH ROUND WAS ARGUED AND VOTED", open=True):
             crit_output = gr.HTML(render_debate_log([]))
@@ -426,7 +494,7 @@ with gr.Blocks(title="T.R.I.A.D. DECISION ENGINE") as demo:
         execute_triad_query,
         inputs=[user_input, active_mode, active_key],
         outputs=[system_status_bar, final_output, vote_output, ego_thought,
-                 id_prop, ego_prop, superego_prop, crit_output],
+                 id_prop, ego_prop, superego_prop, crit_output, debate_file],
     )
 
 if __name__ == "__main__":
