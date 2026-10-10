@@ -89,7 +89,6 @@ The interface opens in your browser. Choose **Local (Ollama)** or **Online (Clou
 ```
 ├── app.py            # Agents, LangGraph debate pipeline and Gradio interface
 ├── style.css         # Dark theme and debate log styling
-├── test_app.py       # Quick checks with fake models (no Ollama needed)
 ├── requirements.txt  # Python dependencies
 └── README.md
 ```
