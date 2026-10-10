@@ -82,14 +82,6 @@ python app.py
 
 The interface opens in your browser. Choose **Local (Ollama)** or **Online (Cloud APIs)**, initialize the engine, type a question and press **Execute T.R.I.A.D. debate**.
 
-### Test
-
-```bash
-python test_app.py
-```
-
-The tests swap the AI models for fake ones, so they run in about a second without Ollama or an API key. Run them after every change.
-
 ---
 
 ## Project structure
