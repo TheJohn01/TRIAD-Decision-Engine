@@ -4,7 +4,7 @@
 
 T.R.I.A.D. is a multi-agent decision engine. Instead of asking one language model for an answer, it puts your question to three AI agents with deliberately different priorities, lets them criticise each other, has them vote and revise, and then a neutral judge synthesizes a final consensus. Every step of the debate is shown in the interface, so you can see *how* the answer was reached, not only *what* it is.
 
-![The T.R.I.A.D. interface at the end of a debate]
+## The T.R.I.A.D. interface at the end of a debate
 <img width="1280" height="1100" alt="3_done" src="https://github.com/user-attachments/assets/044b78ac-7dcd-4eac-b415-d673c4c3b15c" />
 
 
