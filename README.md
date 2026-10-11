@@ -2,6 +2,8 @@
 
 *Synthetic network for objective deliberation.*
 
+[Try the live demo]([https://your-app-name.onrender.com](https://triad-decision-engine.onrender.com))
+
 T.R.I.A.D. is a multi-agent decision engine. Instead of asking one language model for an answer, it puts your question to three AI agents with deliberately different priorities, lets them criticise each other, has them vote and revise, and then a neutral judge synthesizes a final consensus. Every step of the debate is shown in the interface, so you can see *how* the answer was reached, not only *what* it is.
 
 ## The T.R.I.A.D. interface at the end of a debate
