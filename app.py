@@ -89,6 +89,9 @@ STEP_NAMES = {
     "consensus": "Consensus synthesized",
 }
 
+# The debate phases, in order, as shown in the phase tracker
+PHASES = ["PROPOSALS", "CRITIQUE", "VOTE", "REVISE", "CONSENSUS"]
+
 
 # ---------------------------------------------------------------------------
 # 2. State
@@ -368,15 +371,117 @@ def render_debate_log(history: list) -> str:
     return "".join(rounds)
 
 
-def render_outputs(state: dict, status: str, debate_file: str | None = None) -> tuple:
+# ---------------------------------------------------------------------------
+# 7. Chamber display: the three units, the phase tracker and the verdict
+# ---------------------------------------------------------------------------
+def current_phase(state: dict, last_node: str | None) -> str:
+    """Work out which phase is running now, from the last step that finished."""
+    if last_node is None:
+        return "IDLE" if not state else "PROPOSALS"
+    if last_node.endswith("_proposal"):
+        return "PROPOSALS" if len(state.get("proposals", {})) < len(AGENTS) else "CRITIQUE"
+    if last_node == "cross_critique":
+        return "VOTE"
+    if last_node == "voting":
+        return "CONSENSUS" if route_after_vote(state) == "consensus" else "REVISE"
+    if last_node == "revision":
+        return "CRITIQUE"
+    return "COMPLETE"   # the consensus step has finished
+
+
+def unit_lamp(agent: str, phase: str, state: dict) -> tuple[str, str, str]:
+    """Return (lamp style, lamp text, status line) for one agent."""
+    vote = (state.get("votes") or {}).get(agent) or "PENDING"
+    history = state.get("history") or []
+    reason = history[-1].get("reasons", {}).get(agent, "") if history else ""
+
+    if phase == "IDLE":
+        return "standby", "STANDBY", "Waiting for a question."
+    if phase == "PROPOSALS":
+        if agent in (state.get("proposals") or {}):
+            return "ready", "READY", "Proposal submitted."
+        return "busy", "THINKING", "Writing a proposal."
+    if phase == "CRITIQUE":
+        return "busy", "DEBATING", "Critiquing the other two."
+    if phase == "VOTE":
+        return "busy", "VOTING", "Weighing the critiques."
+    # REVISE, CONSENSUS or COMPLETE: show the vote from the last round
+    if phase == "REVISE":
+        return vote.lower(), vote, "Revising its proposal."
+    return vote.lower(), vote, reason or "Vote cast."
+
+
+def render_chamber(state: dict, last_node: str | None = None) -> str:
+    """HTML for the three agent units, the phase tracker and the verdict banner."""
+    phase = current_phase(state, last_node)
+    iteration = state.get("iteration", 0)
+    running_round = iteration + 1 if phase in ("CRITIQUE", "VOTE") else iteration
+    round_no = min(max(running_round, 1), MAX_ROUNDS)
+
+    # Phase tracker
+    steps = []
+    for number, name in enumerate(PHASES, start=1):
+        if phase == "COMPLETE":
+            style = "done"
+        elif name == phase:
+            style = "active"
+        else:
+            style = ""
+        steps.append(f'<li class="phase {style}"><span class="phase-no">{number}</span>{name.title()}</li>')
+    tracker = f"""
+    <div class="tracker">
+      <ol class="phases">{''.join(steps)}</ol>
+      <span class="round">Round {round_no} of {MAX_ROUNDS}</span>
+    </div>"""
+
+    # The three units
+    units = []
+    for agent, cfg in AGENTS.items():
+        lamp, lamp_text, status = unit_lamp(agent, phase, state)
+        role = cfg["title"].split("(")[1].rstrip(")")
+        units.append(f"""
+        <div class="unit unit-{agent}">
+          <div class="unit-name">{agent.upper()}</div>
+          <div class="unit-role">{role.title()}</div>
+          <div class="lamp lamp-{lamp}">{lamp_text}</div>
+          <div class="unit-status">{html.escape(status)}</div>
+        </div>""")
+
+    # Verdict banner
+    votes = list((state.get("votes") or {}).values())
+    if phase == "IDLE":
+        verdict, style, detail = "Awaiting query", "idle", "Type a question and start the debate."
+    elif phase != "COMPLETE":
+        verdict, style, detail = "Deliberating", "busy", f"Phase: {phase.title()}"
+    else:
+        tally = f"{votes.count('APPROVE')} approve, {votes.count('MODIFY')} modify, {votes.count('REJECT')} reject"
+        if votes.count("APPROVE") >= 2:
+            verdict, style = "Resolution approved", "approve"
+        elif votes.count("REJECT") >= 2:
+            verdict, style = "Resolution rejected", "reject"
+        else:
+            verdict, style = "No majority", "modify"
+        detail = f"{tally}. Consensus written below."
+
+    return f"""
+    <div class="chamber">
+      {tracker}
+      <div class="units">{''.join(units)}</div>
+      <div class="verdict verdict-{style}">
+        <span class="verdict-main">{verdict}</span>
+        <span class="verdict-detail">{detail}</span>
+      </div>
+    </div>"""
+
+
+def render_outputs(state: dict, status: str, last_node: str | None = None,
+                   debate_file: str | None = None) -> tuple:
     """Build every dashboard output from whatever the graph has produced so far."""
-    votes = state.get("votes") or {}
     proposals = state.get("proposals") or {}
-    votes_display = "  |  ".join(f"{a.upper()}: [{votes.get(a, 'PENDING')}]" for a in AGENTS)
     return (
         f"*{status}*",
         state.get("final_consensus", ""),
-        votes_display,
+        render_chamber(state, last_node),
         state.get("ego_thought", ""),
         proposals.get("id", ""),
         proposals.get("ego", ""),
@@ -387,7 +492,7 @@ def render_outputs(state: dict, status: str, debate_file: str | None = None) -> 
 
 
 # ---------------------------------------------------------------------------
-# 7. Gradio interface
+# 8. Gradio interface
 # ---------------------------------------------------------------------------
 def toggle_api_key_visibility(mode):
     return gr.update(visible=(mode == ONLINE))
@@ -410,24 +515,28 @@ def execute_triad_query(query, mode, api_key):
         raise gr.Error("Please enter a valid query.")
 
     start = time.time()
-    state, status = {}, "Debate started. Waiting for the first proposals..."
-    yield render_outputs(state, status)
-
     inputs = {"query": query, "mode": mode, "api_key": api_key, "iteration": 0}
+    state, status, last_node = {"query": query}, "Debate started. Waiting for the first proposals...", None
+    yield render_outputs(state, status, last_node)
+
     try:
+        # Each step sends an "updates" chunk (which step finished) and then a
+        # "values" chunk (the full state with its results). The page is only
+        # refreshed on "values", so it never shows a half-updated state.
         for kind, chunk in app_graph.stream(inputs, stream_mode=["updates", "values"]):
-            if kind == "values":
-                state = chunk
-            else:
+            if kind == "updates":
                 done = ", ".join(STEP_NAMES.get(node, node) for node in chunk)
                 status = f"[{time.time() - start:.0f}s] {done}"
-            yield render_outputs(state, status)
+                last_node = list(chunk)[-1]
+            else:
+                state = chunk
+                yield render_outputs(state, status, last_node)
     except Exception as e:
         hint = " Is Ollama running, and are all four models pulled (see README)?" if mode == LOCAL else ""
         raise gr.Error(f"Debate stopped: {type(e).__name__}: {e}.{hint}")
 
     status = f"Done in {time.time() - start:.0f}s // MODE: {mode.upper()}"
-    yield render_outputs(state, status, save_debate(state))
+    yield render_outputs(state, status, last_node, save_debate(state))
 
 
 # Read the CSS ourselves so it works no matter which folder the app is started from
@@ -463,7 +572,7 @@ with gr.Blocks(title="T.R.I.A.D. DECISION ENGINE") as demo:
             )
             submit_btn = gr.Button("EXECUTE T.R.I.A.D. DEBATE", variant="primary", scale=1)
 
-        vote_output = gr.Textbox(label="DECISION STATUS & VOTING MATRIX", interactive=False, elem_classes=["vote-box"])
+        chamber_output = gr.HTML(render_chamber({}))
         final_output = gr.Textbox(label="FINAL SYNTHESIZED CONSENSUS", lines=8, interactive=False)
         debate_file = gr.File(label="DOWNLOAD THIS DEBATE (JSON)", interactive=False)
 
@@ -493,7 +602,7 @@ with gr.Blocks(title="T.R.I.A.D. DECISION ENGINE") as demo:
     submit_btn.click(
         execute_triad_query,
         inputs=[user_input, active_mode, active_key],
-        outputs=[system_status_bar, final_output, vote_output, ego_thought,
+        outputs=[system_status_bar, final_output, chamber_output, ego_thought,
                  id_prop, ego_prop, superego_prop, crit_output, debate_file],
     )
 

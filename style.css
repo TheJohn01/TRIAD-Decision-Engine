@@ -1,3 +1,7 @@
+/* Squared technical face for unit names and the verdict. If there is no
+   internet connection, the page falls back to the monospace font. */
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&display=swap');
+
 /* Gradio themes paint the page through CSS variables, so plain
    "body { background: ... }" rules get covered up. Override the
    variables instead (in both light and dark mode). */
@@ -30,12 +34,157 @@
     text-align: center;
 }
 
-/* Gradio renders single-line Textboxes as <textarea>, not <input> */
-.vote-box textarea {
-    color: #00ffcc !important;
-    font-weight: bold !important;
+/* ------------------------------------------------------------------
+   Chamber: phase tracker, the three agent units and the verdict.
+   The vote lamps are the one loud element; everything else stays quiet.
+------------------------------------------------------------------- */
+.chamber {
+    --approve: #00ffcc;
+    --modify: #ffcc00;
+    --reject: #ff4d4d;
+    --panel: #15171c;
+    --line: #333842;
+    --dim: #8a8d91;
+    --display: 'Chakra Petch', 'Courier New', monospace;
+}
+.unit-id       { --agent: #ff4d4d; }
+.unit-ego      { --agent: #33ccff; }
+.unit-superego { --agent: #66e08a; }
+
+/* Phase tracker */
+.tracker {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px 16px;
+    margin-bottom: 14px;
+}
+.phases {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.phase {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 !important;       /* Gradio adds spacing to list items */
+    line-height: 1.2;
+    padding: 4px 10px 4px 4px;
+    border: 1px solid var(--line);
+    color: var(--dim);
+}
+.phase-no {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    background: var(--line);
+    color: #0b0c10;
+    font-weight: bold;
+}
+.phase.active { border-color: #ff6600; color: #ff6600; }
+.phase.active .phase-no { background: #ff6600; }
+.phase.done { color: #c5c6c7; }
+.phase.done .phase-no { background: #c5c6c7; }
+.round { color: var(--dim); }
+
+/* The three units */
+.units {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+.unit {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--agent);
+}
+.unit-name {
+    font-family: var(--display);
+    font-size: 2em;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--agent);
+}
+.unit-role { color: var(--dim); }
+.unit-status {
+    min-height: 3em;
+    color: #c5c6c7;
+    line-height: 1.4;
+}
+
+/* Vote lamps */
+.lamp {
+    margin: 10px 0 4px;
+    padding: 22px 8px;
     text-align: center;
-    font-size: 1.2em !important;
+    font-family: var(--display);
+    font-size: 1.6em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    border: 2px solid var(--line);
+    color: var(--dim);
+    background: #0b0c10;
+}
+.lamp-ready { border-color: var(--agent); color: var(--agent); }
+.lamp-busy {
+    border-color: var(--agent);
+    color: var(--agent);
+    animation: lamp-pulse 1.6s ease-in-out infinite;
+}
+.lamp-approve { background: var(--approve); border-color: var(--approve); color: #0b0c10; box-shadow: 0 0 24px rgba(0, 255, 204, 0.45); }
+.lamp-modify  { background: var(--modify);  border-color: var(--modify);  color: #0b0c10; box-shadow: 0 0 24px rgba(255, 204, 0, 0.4); }
+.lamp-reject  { background: var(--reject);  border-color: var(--reject);  color: #0b0c10; box-shadow: 0 0 24px rgba(255, 77, 77, 0.45); }
+
+@keyframes lamp-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .lamp-busy { animation: none; }
+}
+
+/* Verdict banner */
+.verdict {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px 16px;
+    margin-top: 12px;
+    padding: 14px 18px;
+    border: 2px solid var(--line);
+    background: var(--panel);
+}
+.verdict-main {
+    font-family: var(--display);
+    font-size: 1.5em;
+    font-weight: 700;
+}
+.verdict-detail { color: var(--dim); }
+.verdict-idle .verdict-main { color: var(--dim); }
+.verdict-busy { border-color: #ff6600; }
+.verdict-busy .verdict-main { color: #ff6600; }
+.verdict-approve { border-color: var(--approve); }
+.verdict-approve .verdict-main { color: var(--approve); }
+.verdict-modify { border-color: var(--modify); }
+.verdict-modify .verdict-main { color: var(--modify); }
+.verdict-reject { border-color: var(--reject); }
+.verdict-reject .verdict-main { color: var(--reject); }
+
+/* Phones: stack the units */
+@media (max-width: 720px) {
+    .units { grid-template-columns: 1fr; }
+    .unit-status { min-height: 0; }
 }
 
 /* This class was used in app.py but had no style before */

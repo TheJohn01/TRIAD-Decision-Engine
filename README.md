@@ -39,7 +39,7 @@ flowchart TD
 5. **Revision.** Without a majority, each agent rewrites its own proposal using the critiques it received, and a new critique round starts.
 6. **Consensus.** A separate judge model, which did not take part in the debate, synthesizes the final answer from the proposals, critiques and votes.
 
-The interface updates live after every step. The **Debate log** shows each round as cards: who critiqued whom, what they said, how they voted and why. When the debate ends, you can download it as a JSON file.
+The interface updates live after every step. Each agent has its own unit panel with a vote lamp that pulses while it thinks and then lights up teal, amber or red for its vote, with its reason underneath. A phase tracker shows where the debate is, and a verdict banner gives the result. The **Debate log** shows each round as cards: who critiqued whom, what they said, how they voted and why. When the debate ends, you can download it as a JSON file.
 
 ---
 
@@ -82,6 +82,14 @@ python app.py
 
 The interface opens in your browser. Choose **Local (Ollama)** or **Online (Cloud APIs)**, initialize the engine, type a question and press **Execute T.R.I.A.D. debate**.
 
+### Test
+
+```bash
+python test_app.py
+```
+
+The tests swap the AI models for fake ones, so they run in about a second without Ollama or an API key. Run them after every change.
+
 ---
 
 ## Project structure
@@ -89,6 +97,7 @@ The interface opens in your browser. Choose **Local (Ollama)** or **Online (Clou
 ```
 ├── app.py            # Agents, LangGraph debate pipeline and Gradio interface
 ├── style.css         # Dark theme and debate log styling
+├── test_app.py       # Quick checks with fake models (no Ollama needed)
 ├── requirements.txt  # Python dependencies
 └── README.md
 ```
